@@ -1,116 +1,114 @@
 #include <iostream>
 #include "mpi.h"
 
-
 void Print_Matrix(int* Mat, int size)
 {
-    std::cout << "Multiplication: " << std::endl;
-    for (int i=0; i < size; i++)
+    std::cout << "Multiplication result: " << std::endl;
+    for (int i = 0; i < size; i++)
     {
         for (int j = 0; j < size; j++)
         {
-            std::cout << Mat[i*size + j] << " ";
+            std::cout << Mat[i * size + j] << " ";
         }
         std::cout << std::endl;
     }
 }
 
-
-int main(int argc,char *argv[])
+int main(int argc, char *argv[])
 {
     double start, stop;
     int i, j, k, l;
     int *A, *B, *C, *buffer, *ans;
-    int size = 1000;
+    int size = (argc > 1) ? atoi(argv[1]) : 1000;  // Размер матрицы (по умолчанию 1000)
     int rank, numprocs, line;
 
-    MPI_Init(&argc,&argv); //MPI Initialize
-    MPI_Comm_rank(MPI_COMM_WORLD,&rank); // Получить текущий номер процесса
-    MPI_Comm_size(MPI_COMM_WORLD,&numprocs); // Получить количество процессов
+    MPI_Init(&argc, &argv);  // Инициализация MPI
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);  // Получить текущий номер процесса
+    MPI_Comm_size(MPI_COMM_WORLD, &numprocs);  // Получить количество процессов
 
-    line = size/numprocs; // Делим данные на блоки (количество процессов), и основной процесс также должен обрабатывать данные
-    A = new int[size*size];
-    B = new int[size*size];
-    C = new int[size*size];
-    // Размер кеша больше или равен размеру обрабатываемых данных, когда он больше, чем фактическая часть данных
-    buffer = new int[size*line]; // Размер пакета данных
-    ans = new int[size*line]; // Сохраняем результат расчета блока данных
+    line = size / numprocs;  // Делим данные на блоки (количество процессов), основной процесс также должен обрабатывать данные
+    A = new int[size * size];
+    B = new int[size * size];
+    C = new int[size * size];
+    buffer = new int[size * line];  // Размер пакета данных
+    ans = new int[size * line];  // Сохраняем результат расчета блока данных
 
-    // Основной процесс присваивает матрице начальное значение и передает матрицу N каждому процессу, а матрицу M передает каждому процессу в группах.
+    // Основной процесс присваивает матрице начальное значение и передает матрицу B другим процессам
     if (rank == 0)
     {
-        for(i = 0; i < size; i++) // Чтение данных
-            for(j = 0; j < size; j++)
+        // Инициализация матрицы A
+        for (i = 0; i < size; i++)
+            for (j = 0; j < size; j++)
                 A[i * size + j] = (i + 2) * (j + 1);
 
-        for(i = 0; i < size; i++)
-            for(j = 0; j < size; j++)
+        // Инициализация матрицы B
+        for (i = 0; i < size; i++)
+            for (j = 0; j < size; j++)
                 B[i * size + j] = (i + 1) + 2 * (j + 3);
 
-        start = MPI_Wtime();
-        // Отправить матрицу N другим подчиненным процессам
+        start = MPI_Wtime();  // Время начала
+
+        // Отправляем матрицу B другим процессам
         for (i = 1; i < numprocs; i++) {
-            MPI_Send(B,size*size,MPI_INT,i,0,MPI_COMM_WORLD);
+            MPI_Send(B, size * size, MPI_INT, i, 0, MPI_COMM_WORLD);
         }
-        // Отправляем каждую строку a каждому подчиненному процессу по очереди
+
+        // Отправляем части матрицы A другим процессам
         for (l = 1; l < numprocs; l++) {
-            MPI_Send(A+(l-1)*line*size,size*line,MPI_INT,l,1,MPI_COMM_WORLD);
+            MPI_Send(A + (l - 1) * line * size, size * line, MPI_INT, l, 1, MPI_COMM_WORLD);
         }
-        // Получаем результат, рассчитанный по процессу
+
+        // Получаем результаты от других процессов
         for (k = 1; k < numprocs; k++) {
-            MPI_Recv(ans,line*size,MPI_INT,k,3,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
-            // Передаем результат в массив c
+            MPI_Recv(ans, line * size, MPI_INT, k, 3, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            // Записываем результаты в матрицу C
             for (i = 0; i < line; i++) {
                 for (j = 0; j < size; j++) {
-                    C[((k-1)*line+i)*size+j] = ans[i*size+j];
+                    C[((k - 1) * line + i) * size + j] = ans[i * size + j];
                 }
             }
         }
-        // Рассчитать оставшиеся данные
-        for (i = (numprocs-1) * line;i < size; i++) {
+
+        // Вычисляем оставшиеся элементы на основном процессе
+        for (i = (numprocs - 1) * line; i < size; i++) {
             for (j = 0; j < size; j++) {
-                int temp=0;
+                int temp = 0;
                 for (k = 0; k < size; k++)
-                    temp += A[i*size+k]*B[k*size+j];
-                C[i*size+j] = temp;
+                    temp += A[i * size + k] * B[k * size + j];
+                C[i * size + j] = temp;
             }
         }
 
-        // Результат теста
-        // Статистика по времени
-        stop = MPI_Wtime();
+        stop = MPI_Wtime();  // Время завершения
 
-        std::cout << "Rank: " << rank << "\nTime: " << stop-start << " s" << std::endl;
-
-        //Print_Matrix(C, size);
-
-        delete [] A;
-        delete [] B;
-        delete [] C;
-        delete [] buffer;
-        delete [] ans;
+        // Выводим время выполнения в консоль
+        std::cout << "Rank: " << rank << "\nTime: " << (stop - start) << " seconds" << std::endl;
     }
 
-        // Другие процессы получают данные и после вычисления результата отправляют их в основной процесс
+        // Другие процессы получают данные, выполняют вычисления и отправляют результат обратно на основной процесс
     else {
-        // Получаем широковещательные данные (матрица b)
-        MPI_Recv(B,size*size,MPI_INT,0,0,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
+        // Получаем матрицу B от основного процесса
+        MPI_Recv(B, size * size, MPI_INT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
-        MPI_Recv(buffer,size*line,MPI_INT,0,1,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
-        // Рассчитать результат продукта и отправить результат в основной процесс
+        // Получаем часть матрицы A
+        MPI_Recv(buffer, size * line, MPI_INT, 0, 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+        // Выполняем умножение и отправляем результат обратно
         for (i = 0; i < line; i++) {
             for (j = 0; j < size; j++) {
-                int temp=0;
-                for(k = 0; k < size; k++)
-                    temp += buffer[i*size+k]*B[k*size+j];
-                ans[i*size+j]=temp;
+                int temp = 0;
+                for (k = 0; k < size; k++)
+                    temp += buffer[i * size + k] * B[k * size + j];
+                ans[i * size + j] = temp;
             }
         }
-        // Отправить результат расчета в основной процесс
-        MPI_Send(ans,line*size,MPI_INT,0,3,MPI_COMM_WORLD);
+
+        // Отправляем результат на основной процесс
+        MPI_Send(ans, line * size, MPI_INT, 0, 3, MPI_COMM_WORLD);
     }
 
-    MPI_Finalize(); // Конец
+    // Завершаем MPI
+    MPI_Finalize();
 
     return 0;
 }
